@@ -2,11 +2,9 @@ name: Build Android APK
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
   pull_request:
-    branches:
-      - main
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -14,99 +12,95 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout do código
+      uses: actions/checkout@v4
 
-      - name: Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+    - name: Configurar Java 17 (Obrigatório para NDK Moderno)
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
-      - name: Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+    - name: Instalar dependências essenciais do sistema
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          ccache \
+          git \
+          libffi-dev \
+          libssl-dev \
+          libtool \
+          automake \
+          autoconf \
+          unzip \
+          zip \
+          zlib1g-dev
 
-      - name: Dependências Linux
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git \
-            zip \
-            unzip \
-            openjdk-17-jdk \
-            autoconf \
-            automake \
-            libtool \
-            pkg-config \
-            zlib1g-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
-            cmake \
-            libffi-dev \
-            libssl-dev \
-            build-essential \
-            ccache
+    - name: Configurar Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
 
-      - name: Instalar Buildozer
-        run: |
-          python -m pip install --upgrade pip
-          pip install buildozer==1.5.0
-          pip install cython==0.29.37
-          pip install virtualenv
+    - name: Instalar Buildozer e Cython
+      run: |
+        pip install --upgrade pip
+        pip install "buildozer>=1.5.0" cython virtualenv
 
-      - name: Instalar Android SDK
-        run: |
-          mkdir -p $HOME/android-sdk
-          cd $HOME/android-sdk
+    - name: Gerar e Configurar o Buildozer.spec
+      run: |
+        MAIN_PATH=$(find . -name "main.py" -print -quit)
+        
+        if [ -z "$MAIN_PATH" ]; then
+          echo "ERRO: O arquivo main.py não foi encontrado no repositório!"
+          exit 1
+        fi
+        
+        APP_DIR=$(dirname "$MAIN_PATH")
+        cd "$APP_DIR"
+        
+        buildozer init
+        
+        # Configurações padrão do projeto
+        sed -i 's/^requirements = .*/requirements = python3==3.11,kivy==2.3.0,kivymd,pyjnius/' buildozer.spec
+        sed -i 's/^title = .*/title = Nossa Conveniencia/' buildozer.spec
+        sed -i 's/^package.name = .*/package.name = nossaconveniencia/' buildozer.spec
+        sed -i 's/^package.domain = .*/package.domain = org.rafaeldrones/' buildozer.spec
+        
+        # Força o parâmetro interno do Buildozer a aceitar licenças
+        sed -i 's/^#android.accept_apk_license = False/android.accept_apk_license = True/' buildozer.spec
 
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
+    - name: Criar Repositório Prévio de Licenças Android
+      run: |
+        # Criamos as duas estruturas de pastas possíveis que o Buildozer adota internamente
+        mkdir -p /home/runner/.buildozer/android/platform/android-sdk/licenses
+        mkdir -p /home/runner/work/AUXILIAR/AUXILIAR/.buildozer/android/platform/android-sdk/licenses
+        
+        # Geramos a assinatura digital pré-aceita para a licença padrão da Google (cobre build-tools 37)
+        # Esse hash diz ao instalador: "O usuário já aceitou os termos em outra máquina"
+        HASHES="244d2478ade40ab973bea949d315483c3e198c3c\n28a28507ee0b20159a6a8d1b1eb47e0477bc2f7e\nd56f5187479451eabf01fb743730253379740aff\n35db55a08361439d4b3fc7c9b763db22223842b4\n2c3322bcfcd72ca1927edfe69574be072216e255\n33b62255aa20ed0223f0016bc3231025114a2754\ne9ac286310d1b314aef7b3d7b70c320d31e91099"
+        
+        echo -e "$HASHES" > /home/runner/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+        echo -e "$HASHES" > /home/runner/work/AUXILIAR/AUXILIAR/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
 
-          unzip -q tools.zip
-
-          mkdir -p cmdline-tools/latest
-
-          mv cmdline-tools/* cmdline-tools/latest/ 2>/dev/null || true
-
-          export ANDROID_SDK_ROOT=$HOME/android-sdk
-
-          yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses
-
-          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager \
-            "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;33.0.2"
-
-          echo "ANDROIDSDK=$HOME/android-sdk" >> $GITHUB_ENV
-          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
-
-      - name: Criar buildozer.spec
-        run: |
-          APP_DIR=$(dirname $(find . -name main.py | head -1))
-          cd "$APP_DIR"
-
-          buildozer init
-
-          sed -i 's/^title = .*/title = Mesa de Luz/' buildozer.spec
-          sed -i 's/^package.name = .*/package.name = mesadeluz/' buildozer.spec
-          sed -i 's/^package.domain = .*/package.domain = org.rafaeldrones/' buildozer.spec
-          sed -i 's/^requirements = .*/requirements = python3,kivy,kivymd,pyjnius/' buildozer.spec
-          sed -i 's/^source.include_exts = .*/source.include_exts = py,png,jpg,jpeg,kv/' buildozer.spec
-
-          echo "android.api = 33" >> buildozer.spec
-          echo "android.minapi = 24" >> buildozer.spec
-          echo "android.ndk = 25b" >> buildozer.spec
-
-      - name: Compilar APK
-        run: |
-          APP_DIR=$(dirname $(find . -name main.py | head -1))
-          cd "$APP_DIR"
-          buildozer android debug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk-debug
-          path: '**/bin/*.apk'
+    - name: Executar o Buildozer com Auto-Injeção de Respostas
+      run: |
+        MAIN_PATH=$(find . -name "main.py" -print -quit)
+        APP_DIR=$(dirname "$MAIN_PATH")
+        cd "$APP_DIR"
+        
+        # Passamos variáveis globais de ambiente que forçam o sdkmanager a rodar em modo silencioso
+        export ANDROID_LICENSES_FLAGS="--accept-licenses"
+        export AUTO_ACCEPT_LICENSE="y"
+        
+        # Usamos uma variação do comando 'yes' (enviando 'y' infinitamente) direto para o fluxo do buildozer.
+        # Caso ele apague a pasta e tente perguntar de novo, o terminal responde 'y' na mesma fração de segundo.
+        echo "Iniciando compilação do APK..."
+        yes "y" | buildozer -v android debug
+        
+    - name: Upload do APK gerado
+      uses: actions/upload-artifact@v4
+      with:
+        name: pacote-apk-debug
+        path: |
+          **/bin/*.apk
