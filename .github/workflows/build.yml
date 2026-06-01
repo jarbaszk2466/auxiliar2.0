@@ -21,6 +21,12 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
+    - name: Instalar e Aceitar o Android SDK Oficial da Google
+      uses: android-actions/setup-android@v3
+      with:
+        # Força a instalação do SDK correto e aceita todas as licenças nativamente
+        packages: 'platform-tools build-tools;33.0.2 platforms;android-33'
+
     - name: Instalar dependências essenciais do sistema
       run: |
         sudo apt-get update
@@ -61,42 +67,27 @@ jobs:
         
         buildozer init
         
-        # Configurações padrão do projeto
+        # Configurações do seu app
         sed -i 's/^requirements = .*/requirements = python3==3.11,kivy==2.3.0,kivymd,pyjnius/' buildozer.spec
         sed -i 's/^title = .*/title = Nossa Conveniencia/' buildozer.spec
         sed -i 's/^package.name = .*/package.name = nossaconveniencia/' buildozer.spec
         sed -i 's/^package.domain = .*/package.domain = org.rafaeldrones/' buildozer.spec
         
-        # Força o parâmetro interno do Buildozer a aceitar licenças
+        # Diz para o Buildozer usar o SDK que a Action instalou no sistema
+        sed -i "s|^#android.sdk_path = .*|android.sdk_path = $ANDROID_HOME|" buildozer.spec
         sed -i 's/^#android.accept_apk_license = False/android.accept_apk_license = True/' buildozer.spec
 
-    - name: Criar Repositório Prévio de Licenças Android
-      run: |
-        # Criamos as duas estruturas de pastas possíveis que o Buildozer adota internamente
-        mkdir -p /home/runner/.buildozer/android/platform/android-sdk/licenses
-        mkdir -p /home/runner/work/AUXILIAR/AUXILIAR/.buildozer/android/platform/android-sdk/licenses
-        
-        # Geramos a assinatura digital pré-aceita para a licença padrão da Google (cobre build-tools 37)
-        # Esse hash diz ao instalador: "O usuário já aceitou os termos em outra máquina"
-        HASHES="244d2478ade40ab973bea949d315483c3e198c3c\n28a28507ee0b20159a6a8d1b1eb47e0477bc2f7e\nd56f5187479451eabf01fb743730253379740aff\n35db55a08361439d4b3fc7c9b763db22223842b4\n2c3322bcfcd72ca1927edfe69574be072216e255\n33b62255aa20ed0223f0016bc3231025114a2754\ne9ac286310d1b314aef7b3d7b70c320d31e91099"
-        
-        echo -e "$HASHES" > /home/runner/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-        echo -e "$HASHES" > /home/runner/work/AUXILIAR/AUXILIAR/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-
-    - name: Executar o Buildozer com Auto-Injeção de Respostas
+    - name: Executar o Buildozer
       run: |
         MAIN_PATH=$(find . -name "main.py" -print -quit)
         APP_DIR=$(dirname "$MAIN_PATH")
         cd "$APP_DIR"
         
-        # Passamos variáveis globais de ambiente que forçam o sdkmanager a rodar em modo silencioso
-        export ANDROID_LICENSES_FLAGS="--accept-licenses"
-        export AUTO_ACCEPT_LICENSE="y"
+        # Limpa o cache local do buildozer que guardou o erro do repositório antigo
+        buildozer android clean
         
-        # Usamos uma variação do comando 'yes' (enviando 'y' infinitamente) direto para o fluxo do buildozer.
-        # Caso ele apague a pasta e tente perguntar de novo, o terminal responde 'y' na mesma fração de segundo.
-        echo "Iniciando compilação do APK..."
-        yes "y" | buildozer -v android debug
+        # Roda o build direto sem pipes interativos
+        buildozer -v android debug
         
     - name: Upload do APK gerado
       uses: actions/upload-artifact@v4
